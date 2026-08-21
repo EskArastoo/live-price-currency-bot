@@ -68,7 +68,6 @@ HISTORY_FILE = os.path.join(
 )
 
 
-# نام کانال
 CHANNEL_USERNAME = "@LivePriceCurrency"
 
 
@@ -93,7 +92,7 @@ GOLD_SYMBOLS = [
 ]
 
 
-# سکه یک گرمی عمداً حذف شده است.
+# سکه یک گرمی حذف شده است.
 COIN_SYMBOLS = [
     ("IR_COIN_QUARTER", "ربع سکه"),
     ("IR_COIN_HALF", "نیم سکه"),
@@ -126,12 +125,7 @@ def to_fa_digits(text):
 
 
 def fa_number(value):
-    """
-    فرمت قیمت‌های معمولی.
-
-    مثال:
-        1025000 -> ۱,۰۲۵,۰۰۰
-    """
+    """فرمت قیمت‌های معمولی."""
 
     try:
         value = float(value)
@@ -144,13 +138,7 @@ def fa_number(value):
 
 
 def fa_change_number(value):
-    """
-    فرمت مقدار تغییر قیمت.
-
-    مثال:
-        2500 -> +۲,۵۰۰
-        -700 -> -۷۰۰
-    """
+    """فرمت مقدار تغییر قیمت."""
 
     try:
         value = float(value)
@@ -166,15 +154,7 @@ def fa_change_number(value):
 
 
 def fa_crypto_number(value):
-    """
-    فرمت قیمت ارز دیجیتال.
-
-    اعداد بزرگ:
-        117500 -> ۱۱۷,۵۰۰
-
-    اعداد کوچک:
-        3.10 -> ۳.۱۰
-    """
+    """فرمت قیمت ارز دیجیتال."""
 
     try:
         value = float(value)
@@ -244,9 +224,7 @@ def load_previous_prices():
 
 
 def save_current_prices(prices):
-    """
-    ذخیره قیمت‌های فعلی به‌صورت امن.
-    """
+    """ذخیره قیمت‌های فعلی به‌صورت امن."""
 
     temp_file = HISTORY_FILE + ".tmp"
 
@@ -441,12 +419,12 @@ def render_price_row(
     )
 
     if not item:
-        return None, None
+        return None
 
     price = item.get("price")
 
     if price is None:
-        return None, None
+        return None
 
     # ذخیره قیمت فعلی
     current_prices[symbol] = price
@@ -501,13 +479,7 @@ def render_price_row(
             f"{change_html}"
         )
 
-    direction, _ = get_price_change(
-        symbol,
-        price,
-        previous_prices
-    )
-
-    return row, direction
+    return row
 
 
 # ============================================================
@@ -527,11 +499,10 @@ def render_section(
     """ساخت یک بخش مثل ارز، طلا، سکه یا کریپتو."""
 
     rows = []
-    directions = []
 
     for symbol, label in symbol_list:
 
-        row, direction = render_price_row(
+        row = render_price_row(
             symbol=symbol,
             label=label,
             items=items,
@@ -544,73 +515,12 @@ def render_section(
         if row:
             rows.append(row)
 
-        if direction in (
-            "up",
-            "down"
-        ):
-            directions.append(
-                direction
-            )
-
     if not rows:
-        return "", directions
-
-    block = (
-        f"{icon} <b>{title}</b>\n"
-        + "\n".join(rows)
-    )
-
-    return block, directions
-
-
-# ============================================================
-# خلاصه وضعیت بازار
-# ============================================================
-
-def market_summary(directions):
-    """
-    نمایش وضعیت کلی بازار.
-    """
-
-    up_count = directions.count(
-        "up"
-    )
-
-    down_count = directions.count(
-        "down"
-    )
-
-    if up_count == 0 and down_count == 0:
-        return "⏺ <b>بازار بدون تغییر</b>"
-
-    up_text = to_fa_digits(
-        up_count
-    )
-
-    down_text = to_fa_digits(
-        down_count
-    )
-
-    if up_count > down_count:
-
-        return (
-            "📈 <b>بازار صعودی</b>"
-            f"  ·  🟢 {up_text}"
-            f"  ·  🔴 {down_text}"
-        )
-
-    if down_count > up_count:
-
-        return (
-            "📉 <b>بازار نزولی</b>"
-            f"  ·  🟢 {up_text}"
-            f"  ·  🔴 {down_text}"
-        )
+        return ""
 
     return (
-        "↔️ <b>بازار متعادل</b>"
-        f"  ·  🟢 {up_text}"
-        f"  ·  🔴 {down_text}"
+        f"{icon} <b>{title}</b>\n"
+        + "\n".join(rows)
     )
 
 
@@ -645,8 +555,6 @@ def build_message():
         []
     )
 
-    all_directions = []
-
     blocks = []
 
     # --------------------------------------------------------
@@ -663,7 +571,7 @@ def build_message():
     # ارز
     # --------------------------------------------------------
 
-    currency_block, currency_directions = render_section(
+    currency_block = render_section(
         title="ارز",
         icon="💵",
         symbol_list=CURRENCY_SYMBOLS,
@@ -678,15 +586,11 @@ def build_message():
             currency_block
         )
 
-    all_directions.extend(
-        currency_directions
-    )
-
     # --------------------------------------------------------
     # طلا
     # --------------------------------------------------------
 
-    gold_block, gold_directions = render_section(
+    gold_block = render_section(
         title="طلا",
         icon="🥇",
         symbol_list=GOLD_SYMBOLS,
@@ -701,15 +605,11 @@ def build_message():
             gold_block
         )
 
-    all_directions.extend(
-        gold_directions
-    )
-
     # --------------------------------------------------------
     # سکه
     # --------------------------------------------------------
 
-    coin_block, coin_directions = render_section(
+    coin_block = render_section(
         title="سکه",
         icon="🪙",
         symbol_list=COIN_SYMBOLS,
@@ -724,15 +624,11 @@ def build_message():
             coin_block
         )
 
-    all_directions.extend(
-        coin_directions
-    )
-
     # --------------------------------------------------------
     # کریپتو
     # --------------------------------------------------------
 
-    crypto_block, crypto_directions = render_section(
+    crypto_block = render_section(
         title="کریپتو",
         icon="₿",
         symbol_list=CRYPTO_SYMBOLS,
@@ -746,23 +642,6 @@ def build_message():
 
         blocks.append(
             crypto_block
-        )
-
-    all_directions.extend(
-        crypto_directions
-    )
-
-    # --------------------------------------------------------
-    # خلاصه بازار
-    # --------------------------------------------------------
-
-    if all_directions:
-
-        blocks.insert(
-            1,
-            market_summary(
-                all_directions
-            )
         )
 
     # --------------------------------------------------------
