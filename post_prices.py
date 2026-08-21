@@ -1,10 +1,11 @@
 """
 ربات ارسال قیمت دلار، یورو، طلا، سکه و کریپتو به کانال تلگرام
+منبع قیمت‌ها: brsapi.ir (یک API واحد برای همه چیز)
 اجرا: python post_prices.py
 تنظیمات لازم از طریق متغیرهای محیطی (Environment Variables) خونده می‌شن:
   TELEGRAM_BOT_TOKEN   -> توکن رباتی که از BotFather گرفتی
-  TELEGRAM_CHAT_ID     -> آیدی کانال (مثلا @mychannel یا عدد -100...)
-  NAVASAN_API_KEY      -> کلید API که از navasan.tech گرفتی
+  TELEGRAM_CHAT_ID     -> آیدی کانال (مثلا @LivePriceCurrency)
+  BRSAPI_KEY           -> کلید API که از brsapi.ir گرفتی
 """
 
 import os
@@ -14,11 +15,16 @@ from datetime import datetime
 
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
-NAVASAN_API_KEY = os.environ.get("NAVASAN_API_KEY")
+BRSAPI_KEY = os.environ.get("BRSAPI_KEY")
 
-if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
-    print("خطا: TELEGRAM_BOT_TOKEN یا TELEGRAM_CHAT_ID تنظیم نشده.")
+if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID or not BRSAPI_KEY:
+    print("خطا: یکی از TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID / BRSAPI_KEY تنظیم نشده.")
     sys.exit(1)
+
+HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                  "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+}
 
 
 def fa_number(n):
@@ -29,61 +35,60 @@ def fa_number(n):
         return "نامشخص"
 
 
-def get_navasan_prices():
-    """دریافت قیمت دلار، یورو، طلا و سکه از navasan.tech"""
-    if not NAVASAN_API_KEY:
-        return {}
-    url = f"http://api.navasan.tech/latest/?api_key={NAVASAN_API_KEY}"
-    try:
-        resp = requests.get(url, timeout=15)
-        resp.raise_for_status()
-        data = resp.json()
-        return {
-            "دلار": data.get("usd_sell", {}).get("value") or data.get("usd", {}).get("value"),
-            "یورو": data.get("eur_sell", {}).get("value") or data.get("eur", {}).get("value"),
-            "طلای ۱۸ عیار": data.get("18ayar", {}).get("value") or data.get("gold_18k", {}).get("value"),
-            "سکه امامی": data.get("emami1", {}).get("value") or data.get("sekee", {}).get("value"),
-        }
-    except Exception as e:
-        print(f"خطا در دریافت قیمت‌های navasan: {e}")
-        return {}
+def find_by_symbol(items, symbol):
+    for it in items or []:
+        if it.get("symbol") == symbol:
+            return it
+    return None
 
 
-def get_crypto_prices():
-    """دریافت قیمت بیت‌کوین و اتریوم از CoinGecko (رایگان و بدون نیاز به کلید)"""
-    url = "https://api.coingecko.com/api/v3/simple/price"
-    params = {"ids": "bitcoin,ethereum", "vs_currencies": "usd"}
-    try:
-        resp = requests.get(url, params=params, timeout=15)
-        resp.raise_for_status()
-        data = resp.json()
-        return {
-            "بیت‌کوین (BTC)": data.get("bitcoin", {}).get("usd"),
-            "اتریوم (ETH)": data.get("ethereum", {}).get("usd"),
-        }
-    except Exception as e:
-        print(f"خطا در دریافت قیمت‌های کریپتو: {e}")
-        return {}
+def get_all_prices():
+    url = f"https://Api.BrsApi.ir/Market/Gold_Currency.php?key={BRSAPI_KEY}"
+    resp = requests.get(url, headers=HEADERS, timeout=15)
+    resp.raise_for_status()
+    return resp.json()
 
 
 def build_message():
+    data = get_all_prices()
     now = datetime.now().strftime("%Y-%m-%d %H:%M")
     lines = [f"📊 بروزرسانی قیمت‌ها\n🕒 {now}\n"]
 
-    fiat_gold = get_navasan_prices()
-    if fiat_gold:
-        lines.append("💵 ارز و طلا:")
-        for name, value in fiat_gold.items():
-            if value:
-                lines.append(f"{name}: {fa_number(value)} تومان")
+    currency_items = data.get("currency", [])
+    gold_items = data.get("gold", [])
+    crypto_items = data.get("cryptocurrency", [])
+
+    # ارز
+    usd = find_by_symbol(currency_items, "USD")
+    eur = find_by_symbol(currency_items, "EUR")
+    if usd or eur:
+        lines.append("💵 ارز:")
+        if usd:
+            lines.append(f"دلار: {fa_number(usd['price'])} {usd.get('unit', 'تومان')}")
+        if eur:
+            lines.append(f"یورو: {fa_number(eur['price'])} {eur.get('unit', 'تومان')}")
         lines.append("")
 
-    crypto = get_crypto_prices()
-    if crypto:
-        lines.append("🪙 کریپتو:")
-        for name, value in crypto.items():
-            if value:
-                lines.append(f"{name}: ${fa_number(value)}")
+    # طلا و سکه
+    gold18 = find_by_symbol(gold_items, "IR_GOLD_18K")
+    coin_emami = find_by_symbol(gold_items, "IR_COIN_EMAMI")
+    if gold18 or coin_emami:
+        lines.append("🪙 طلا و سکه:")
+        if gold18:
+            lines.append(f"طلای ۱۸ عیار: {fa_number(gold18['price'])} {gold18.get('unit', 'تومان')}")
+        if coin_emami:
+            lines.append(f"سکه امامی: {fa_number(coin_emami['price'])} {coin_emami.get('unit', 'تومان')}")
+        lines.append("")
+
+    # کریپتو
+    btc = find_by_symbol(crypto_items, "BTC")
+    eth = find_by_symbol(crypto_items, "ETH")
+    if btc or eth:
+        lines.append("₿ کریپتو:")
+        if btc:
+            lines.append(f"بیت‌کوین: ${fa_number(btc['price'])}")
+        if eth:
+            lines.append(f"اتریوم: ${fa_number(eth['price'])}")
 
     return "\n".join(lines)
 
