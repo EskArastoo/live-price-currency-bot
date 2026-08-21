@@ -1,23 +1,35 @@
 """
 ربات ارسال قیمت دلار، یورو، طلا، سکه و کریپتو به کانال تلگرام
-منبع قیمت‌ها: brsapi.ir (یک API واحد برای همه چیز)
-اجرا: python post_prices.py
 
-تنظیمات لازم از طریق متغیرهای محیطی (Environment Variables) خونده می‌شن:
-  TELEGRAM_BOT_TOKEN   -> توکن رباتی که از BotFather گرفتی
-  TELEGRAM_CHAT_ID     -> آیدی کانال (مثلا @LivePriceCurrency)
-  BRSAPI_KEY           -> کلید API که از brsapi.ir گرفتی
+منبع قیمت‌ها:
+    brsapi.ir
 
-فایل last_prices.json کنار همین اسکریپت ذخیره می‌شه تا قیمتِ اجرای قبلی
-رو به خاطر بسپاریم و بشه دایره‌ی سبز (صعود) و قرمز (نزول) رو نشون داد.
+اجرا:
+    python post_prices.py
+
+تنظیمات لازم از طریق Environment Variables:
+
+    TELEGRAM_BOT_TOKEN
+    TELEGRAM_CHAT_ID
+    BRSAPI_KEY
+
+فایل last_prices.json کنار همین اسکریپت ذخیره می‌شود
+تا قیمت اجرای قبلی برای تشخیص افزایش/کاهش در دسترس باشد.
 """
+
 import os
 import sys
 import json
 import requests
 import jdatetime
+
 from datetime import datetime
 from zoneinfo import ZoneInfo
+
+
+# ============================================================
+# تنظیمات اصلی
+# ============================================================
 
 jdatetime.set_locale("fa_IR")
 
@@ -27,21 +39,40 @@ TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 BRSAPI_KEY = os.environ.get("BRSAPI_KEY")
 
+
 if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID or not BRSAPI_KEY:
-    print("خطا: یکی از TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID / BRSAPI_KEY تنظیم نشده.")
+    print(
+        "خطا: یکی از متغیرهای زیر تنظیم نشده است:\n"
+        "TELEGRAM_BOT_TOKEN\n"
+        "TELEGRAM_CHAT_ID\n"
+        "BRSAPI_KEY"
+    )
     sys.exit(1)
 
+
 HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-                  "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 "
+        "(KHTML, like Gecko) "
+        "Chrome/124.0.0.0 Safari/537.36"
+    )
 }
 
-# فایلی که قیمت اجرای قبلی رو نگه می‌داره تا بشه صعود/نزول رو تشخیص داد
-HISTORY_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "last_prices.json")
 
-# ---------------------------------------------------------------------------
-# نمادهایی که توی پیام نمایش داده می‌شن (به همین ترتیب و با همین برچسب فارسی)
-# ---------------------------------------------------------------------------
+HISTORY_FILE = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)),
+    "last_prices.json"
+)
+
+
+DIVIDER = "━━━━━━━━━━━━━━"
+
+
+# ============================================================
+# نمادهای مورد استفاده
+# ============================================================
+
 CURRENCY_SYMBOLS = [
     ("USD", "دلار آمریکا"),
     ("USDT_IRT", "دلار تتر"),
@@ -50,12 +81,14 @@ CURRENCY_SYMBOLS = [
     ("AED", "درهم امارات"),
 ]
 
+
 GOLD_SYMBOLS = [
     ("IR_GOLD_18K", "طلای ۱۸ عیار"),
     ("IR_GOLD_24K", "طلای ۲۴ عیار"),
     ("IR_GOLD_MELTED", "طلای آب‌شده نقدی"),
     ("XAUUSD", "انس طلای جهانی"),
 ]
+
 
 COIN_SYMBOLS = [
     ("IR_COIN_1G", "سکه یک گرمی"),
@@ -65,6 +98,7 @@ COIN_SYMBOLS = [
     ("IR_COIN_BAHAR", "سکه بهار آزادی"),
 ]
 
+
 CRYPTO_SYMBOLS = [
     ("BTC", "بیت‌کوین"),
     ("ETH", "اتریوم"),
@@ -72,189 +106,776 @@ CRYPTO_SYMBOLS = [
     ("SOL", "سولانا"),
 ]
 
-DIVIDER = "──────────────"
+
+# ============================================================
+# تبدیل اعداد به فارسی
+# ============================================================
+
+EN_TO_FA_DIGITS = str.maketrans(
+    "0123456789",
+    "۰۱۲۳۴۵۶۷۸۹"
+)
 
 
-def fa_number(n):
-    """تبدیل عدد به رشته با جداکننده هزارگان (بدون اعشار) - برای تومان/دلار بزرگ"""
+def to_fa_digits(text):
+    """تبدیل اعداد انگلیسی به اعداد فارسی."""
+    return str(text).translate(EN_TO_FA_DIGITS)
+
+
+def fa_number(value):
+    """
+    فرمت قیمت‌های معمولی.
+
+    مثال:
+        1025000 -> ۱,۰۲۵,۰۰۰
+    """
+
     try:
-        return f"{float(n):,.0f}"
+        value = float(value)
     except (ValueError, TypeError):
         return "نامشخص"
 
+    return to_fa_digits(
+        f"{value:,.0f}"
+    )
 
-def fa_crypto_number(n):
-    """قیمت کریپتو رو با جداکننده هزارگان فرمت می‌کنه؛ برای اعداد کوچیک (زیر ۱۰۰) دو رقم اعشار نگه می‌داره"""
+
+def fa_change_number(value):
+    """
+    فرمت مقدار تغییر قیمت.
+
+    مثال:
+        2500  -> +۲,۵۰۰
+        -700  -> -۷۰۰
+    """
+
     try:
-        value = float(n)
+        value = float(value)
     except (ValueError, TypeError):
-        return "نامشخص"
+        return "۰"
+
     if abs(value) >= 100:
-        return f"{value:,.0f}"
-    return f"{value:,.2f}"
+        text = f"{value:+,.0f}"
+    else:
+        text = f"{value:+,.2f}"
+
+    return to_fa_digits(text)
 
 
-def find_by_symbol(items, symbol):
-    for it in items or []:
-        if it.get("symbol") == symbol:
-            return it
-    return None
+def fa_crypto_number(value):
+    """
+    فرمت قیمت ارز دیجیتال.
 
+    برای اعداد بزرگ بدون اعشار،
+    برای اعداد کوچک با دو رقم اعشار.
+    """
+
+    try:
+        value = float(value)
+    except (ValueError, TypeError):
+        return "نامشخص"
+
+    if abs(value) >= 100:
+        text = f"{value:,.0f}"
+    else:
+        text = f"{value:,.2f}"
+
+    return to_fa_digits(text)
+
+
+# ============================================================
+# دریافت قیمت‌ها از API
+# ============================================================
 
 def get_all_prices():
-    url = f"https://Api.BrsApi.ir/Market/Gold_Currency.php?key={BRSAPI_KEY}"
-    resp = requests.get(url, headers=HEADERS, timeout=15)
-    resp.raise_for_status()
-    return resp.json()
+    """دریافت تمام قیمت‌ها از BRS API."""
 
+    url = (
+        "https://Api.BrsApi.ir/Market/Gold_Currency.php"
+        f"?key={BRSAPI_KEY}"
+    )
+
+    response = requests.get(
+        url,
+        headers=HEADERS,
+        timeout=15
+    )
+
+    response.raise_for_status()
+
+    return response.json()
+
+
+# ============================================================
+# مدیریت تاریخچه قیمت
+# ============================================================
 
 def load_previous_prices():
-    """قیمت‌های اجرای قبلی رو از فایل می‌خونه؛ اگه فایل نبود یا خراب بود، دیکشنری خالی برمی‌گردونه"""
-    if os.path.exists(HISTORY_FILE):
-        try:
-            with open(HISTORY_FILE, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except (json.JSONDecodeError, OSError):
-            return {}
+    """خواندن قیمت‌های اجرای قبلی."""
+
+    if not os.path.exists(HISTORY_FILE):
+        return {}
+
+    try:
+        with open(
+            HISTORY_FILE,
+            "r",
+            encoding="utf-8"
+        ) as file:
+            data = json.load(file)
+
+        if isinstance(data, dict):
+            return data
+
+    except (
+        json.JSONDecodeError,
+        OSError
+    ):
+        pass
+
     return {}
 
 
 def save_current_prices(prices):
-    with open(HISTORY_FILE, "w", encoding="utf-8") as f:
-        json.dump(prices, f, ensure_ascii=False, indent=2)
+    """
+    ذخیره قیمت‌های فعلی.
+
+    ابتدا در فایل موقت ذخیره می‌شود تا اگر
+    برنامه وسط عملیات متوقف شد، فایل اصلی خراب نشود.
+    """
+
+    temp_file = HISTORY_FILE + ".tmp"
+
+    with open(
+        temp_file,
+        "w",
+        encoding="utf-8"
+    ) as file:
+        json.dump(
+            prices,
+            file,
+            ensure_ascii=False,
+            indent=2
+        )
+
+    os.replace(
+        temp_file,
+        HISTORY_FILE
+    )
 
 
-def trend_text(symbol, current_price, previous_prices):
-    """بر اساس مقایسه با اجرای قبلی، دایره رنگی + درصد تغییر رو برمی‌گردونه (مثلا ' 🟢 +۰.۴۳٪')"""
-    prev = previous_prices.get(symbol)
-    if prev is None:
-        return ""
+# ============================================================
+# پیدا کردن یک نماد
+# ============================================================
+
+def find_by_symbol(items, symbol):
+    """پیدا کردن یک نماد در لیست API."""
+
+    for item in items or []:
+        if item.get("symbol") == symbol:
+            return item
+
+    return None
+
+
+# ============================================================
+# تشخیص افزایش / کاهش
+# ============================================================
+
+def get_price_change(
+    symbol,
+    current_price,
+    previous_prices
+):
+    """
+    مقایسه قیمت فعلی با اجرای قبلی.
+
+    خروجی:
+        ("up", change)
+        ("down", change)
+        ("same", 0)
+        (None, None)
+    """
+
+    previous_price = previous_prices.get(symbol)
+
+    if previous_price is None:
+        return None, None
+
     try:
-        prev = float(prev)
+        previous_price = float(previous_price)
         current_price = float(current_price)
-    except (TypeError, ValueError):
-        return ""
-    if prev == 0:
-        return ""
-    diff = current_price - prev
-    percent = (diff / prev) * 100
-    if diff > 0:
-        icon = "🟢"
-    elif diff < 0:
-        icon = "🔴"
-    else:
-        icon = "⚪️"
-    percent_text = to_fa_digits(f"{percent:+.2f}") + "٪"
-    return f" {icon} {percent_text}"
+    except (ValueError, TypeError):
+        return None, None
+
+    change = current_price - previous_price
+
+    if change > 0:
+        return "up", change
+
+    if change < 0:
+        return "down", change
+
+    return "same", 0
 
 
-EN_TO_FA_DIGITS = str.maketrans("0123456789", "۰۱۲۳۴۵۶۷۸۹")
+def trend_html(
+    symbol,
+    current_price,
+    previous_prices
+):
+    """
+    ساخت نمایش تغییر قیمت.
+
+    افزایش:
+        🟢 (+۲,۵۰۰)
+
+    کاهش:
+        🔴 (-۷۰۰)
+
+    بدون تغییر:
+        هیچ چیزی نمایش داده نمی‌شود.
+    """
+
+    direction, change = get_price_change(
+        symbol,
+        current_price,
+        previous_prices
+    )
+
+    if direction == "up":
+        return (
+            f" 🟢 "
+            f"({fa_change_number(change)})"
+        )
+
+    if direction == "down":
+        return (
+            f" 🔴 "
+            f"({fa_change_number(change)})"
+        )
+
+    return ""
 
 
-def to_fa_digits(text):
-    """اعداد انگلیسی رو به رقم فارسی تبدیل می‌کنه (فقط برای نمایش تاریخ/ساعت)"""
-    return text.translate(EN_TO_FA_DIGITS)
+# ============================================================
+# تاریخ و ساعت تهران
+# ============================================================
 
+def jalali_date():
+    """تاریخ شمسی ایران."""
 
-def jalali_now_str():
-    """تاریخ و ساعت شمسیِ ایران رو (نه ساعت سرور) به فارسی و خوانا برمی‌گردونه"""
-    tehran_now = datetime.now(TEHRAN_TZ)
-    now = jdatetime.datetime.fromgregorian(datetime=tehran_now)
-    text = now.strftime("%A %d %B %Y  -  ساعت %H:%M")
+    tehran_now = datetime.now(
+        TEHRAN_TZ
+    )
+
+    jalali_now = jdatetime.datetime.fromgregorian(
+        datetime=tehran_now
+    )
+
+    text = jalali_now.strftime(
+        "%A %d %B %Y"
+    )
+
     return to_fa_digits(text)
 
 
-def render_section(title, icon, symbol_list, items, current_prices, previous_prices, unit_fallback="تومان", is_usd=False, number_fn=fa_number):
-    """یه بخش از پیام (مثلا ارز یا طلا) رو می‌سازه؛ اگه هیچ نمادی پیدا نشه خط خالی برمی‌گردونه"""
-    rows = []
-    for symbol, label in symbol_list:
-        item = find_by_symbol(items, symbol)
-        if not item:
-            continue
-        price = item["price"]
-        current_prices[symbol] = price
-        icon_trend = trend_text(symbol, price, previous_prices)
-        unit = item.get("unit", unit_fallback)
-        prefix = "$" if is_usd else ""
-        price_text = number_fn(price)
-        if is_usd:
-            rows.append(f"▫️ {label}: {prefix}{price_text}{icon_trend}")
-        else:
-            rows.append(f"▫️ {label}: {price_text} {unit}{icon_trend}")
-    if not rows:
-        return ""
-    return f"{icon} <b>{title}</b>\n" + "\n".join(rows)
+def tehran_time():
+    """ساعت تهران."""
 
+    tehran_now = datetime.now(
+        TEHRAN_TZ
+    )
+
+    return to_fa_digits(
+        tehran_now.strftime("%H:%M")
+    )
+
+
+# ============================================================
+# ساخت یک ردیف قیمت
+# ============================================================
+
+def render_price_row(
+    symbol,
+    label,
+    items,
+    current_prices,
+    previous_prices,
+    is_crypto=False
+):
+    """
+    ساخت یک ردیف قیمت.
+
+    مثال:
+
+    ▫️ دلار آمریکا: ۱۰۲,۵۰۰ تومان 🟢 (+۲,۵۰۰)
+    """
+
+    item = find_by_symbol(
+        items,
+        symbol
+    )
+
+    if not item:
+        return None, None
+
+    price = item.get("price")
+
+    if price is None:
+        return None, None
+
+    # ذخیره قیمت فعلی
+    current_prices[symbol] = price
+
+    # تغییر قیمت
+    change_html = trend_html(
+        symbol,
+        price,
+        previous_prices
+    )
+
+    # قیمت کریپتو
+    if is_crypto:
+
+        price_text = fa_crypto_number(
+            price
+        )
+
+        row = (
+            f"▫️ {label}: "
+            f"<b>${price_text}</b>"
+            f"{change_html}"
+        )
+
+    # قیمت‌های معمولی
+    else:
+
+        price_text = fa_number(
+            price
+        )
+
+        unit = item.get(
+            "unit",
+            "تومان"
+        )
+
+        row = (
+            f"▫️ {label}: "
+            f"<b>{price_text}</b> "
+            f"{unit}"
+            f"{change_html}"
+        )
+
+    direction, _ = get_price_change(
+        symbol,
+        price,
+        previous_prices
+    )
+
+    return row, direction
+
+
+# ============================================================
+# ساخت یک بخش کامل
+# ============================================================
+
+def render_section(
+    title,
+    icon,
+    symbol_list,
+    items,
+    current_prices,
+    previous_prices,
+    is_crypto=False
+):
+    """ساخت یک بخش مثل ارز، طلا، سکه یا کریپتو."""
+
+    rows = []
+    directions = []
+
+    for symbol, label in symbol_list:
+
+        row, direction = render_price_row(
+            symbol=symbol,
+            label=label,
+            items=items,
+            current_prices=current_prices,
+            previous_prices=previous_prices,
+            is_crypto=is_crypto
+        )
+
+        if row:
+            rows.append(row)
+
+        if direction in (
+            "up",
+            "down"
+        ):
+            directions.append(direction)
+
+    if not rows:
+        return "", directions
+
+    block = (
+        f"{icon} <b>{title}</b>\n"
+        + "\n".join(rows)
+    )
+
+    return block, directions
+
+
+# ============================================================
+# خلاصه وضعیت بازار
+# ============================================================
+
+def market_summary(directions):
+    """
+    نمایش وضعیت کلی تغییرات.
+
+    مثال:
+        📈 بازار متمایل به صعود · 🟢 ۷ · 🔴 ۳
+    """
+
+    up_count = directions.count("up")
+    down_count = directions.count("down")
+
+    if up_count == 0 and down_count == 0:
+        return (
+            "⏺ <b>بدون تغییر</b>"
+        )
+
+    up_text = to_fa_digits(
+        up_count
+    )
+
+    down_text = to_fa_digits(
+        down_count
+    )
+
+    if up_count > down_count:
+
+        return (
+            "📈 <b>بازار متمایل به صعود</b>"
+            f"  ·  🟢 {up_text}"
+            f"  ·  🔴 {down_text}"
+        )
+
+    if down_count > up_count:
+
+        return (
+            "📉 <b>بازار متمایل به نزول</b>"
+            f"  ·  🟢 {up_text}"
+            f"  ·  🔴 {down_text}"
+        )
+
+    return (
+        "↔️ <b>بازار متعادل</b>"
+        f"  ·  🟢 {up_text}"
+        f"  ·  🔴 {down_text}"
+    )
+
+
+# ============================================================
+# ساخت پیام نهایی
+# ============================================================
 
 def build_message():
+
+    # دریافت اطلاعات
     data = get_all_prices()
+
+    # قیمت‌های اجرای قبلی
     previous_prices = load_previous_prices()
+
+    # قیمت‌های اجرای فعلی
     current_prices = {}
 
-    currency_items = data.get("currency", [])
-    gold_items = data.get("gold", [])
-    crypto_items = data.get("cryptocurrency", [])
+    # بخش‌های API
+    currency_items = data.get(
+        "currency",
+        []
+    )
 
-    blocks = [
-        f"📊 <b>گزارش لحظه‌ای قیمت‌ها</b>",
-        f"🗓 {jalali_now_str()}",
-    ]
+    gold_items = data.get(
+        "gold",
+        []
+    )
 
-    currency_block = render_section("نرخ ارز", "💵", CURRENCY_SYMBOLS, currency_items, current_prices, previous_prices)
+    crypto_items = data.get(
+        "cryptocurrency",
+        []
+    )
+
+    all_directions = []
+
+    blocks = []
+
+    # --------------------------------------------------------
+    # Header
+    # --------------------------------------------------------
+
+    header = (
+        "📊 <b>گزارش لحظه‌ای بازار</b>\n"
+        f"🗓 {jalali_date()}\n"
+        f"⏱ بروزرسانی: <b>{tehran_time()}</b>"
+    )
+
+    blocks.append(header)
+
+    # --------------------------------------------------------
+    # ارز
+    # --------------------------------------------------------
+
+    currency_block, currency_directions = render_section(
+        title="نرخ ارز",
+        icon="💵",
+        symbol_list=CURRENCY_SYMBOLS,
+        items=currency_items,
+        current_prices=current_prices,
+        previous_prices=previous_prices
+    )
+
     if currency_block:
         blocks.append(currency_block)
 
-    gold_block = render_section("طلا", "🪙", GOLD_SYMBOLS, gold_items, current_prices, previous_prices)
-    coin_block = render_section("سکه", "🪙", COIN_SYMBOLS, gold_items, current_prices, previous_prices)
-    if gold_block or coin_block:
-        combined = []
-        if gold_block:
-            combined.append(gold_block)
-        if gold_block and coin_block:
-            combined.append(DIVIDER)
-        if coin_block:
-            combined.append(coin_block)
-        blocks.append("\n".join(combined))
-
-    crypto_block = render_section(
-        "ارز دیجیتال", "₿", CRYPTO_SYMBOLS, crypto_items, current_prices, previous_prices,
-        is_usd=True, number_fn=fa_crypto_number,
+    all_directions.extend(
+        currency_directions
     )
+
+    # --------------------------------------------------------
+    # طلا
+    # --------------------------------------------------------
+
+    gold_block, gold_directions = render_section(
+        title="طلا",
+        icon="🥇",
+        symbol_list=GOLD_SYMBOLS,
+        items=gold_items,
+        current_prices=current_prices,
+        previous_prices=previous_prices
+    )
+
+    if gold_block:
+        blocks.append(gold_block)
+
+    all_directions.extend(
+        gold_directions
+    )
+
+    # --------------------------------------------------------
+    # سکه
+    # --------------------------------------------------------
+
+    coin_block, coin_directions = render_section(
+        title="سکه",
+        icon="🪙",
+        symbol_list=COIN_SYMBOLS,
+        items=gold_items,
+        current_prices=current_prices,
+        previous_prices=previous_prices
+    )
+
+    if coin_block:
+        blocks.append(coin_block)
+
+    all_directions.extend(
+        coin_directions
+    )
+
+    # --------------------------------------------------------
+    # کریپتو
+    # --------------------------------------------------------
+
+    crypto_block, crypto_directions = render_section(
+        title="ارز دیجیتال",
+        icon="₿",
+        symbol_list=CRYPTO_SYMBOLS,
+        items=crypto_items,
+        current_prices=current_prices,
+        previous_prices=previous_prices,
+        is_crypto=True
+    )
+
     if crypto_block:
         blocks.append(crypto_block)
 
-    save_current_prices(current_prices)
-    return "\n\n".join(blocks)
+    all_directions.extend(
+        crypto_directions
+    )
 
+    # --------------------------------------------------------
+    # خلاصه بازار
+    # --------------------------------------------------------
+
+    if all_directions:
+
+        blocks.insert(
+            1,
+            market_summary(
+                all_directions
+            )
+        )
+
+    # --------------------------------------------------------
+    # Footer
+    # --------------------------------------------------------
+
+    footer = (
+        f"{DIVIDER}\n"
+        "🤖 <i>قیمت‌ها به‌صورت خودکار بروزرسانی می‌شوند.</i>"
+    )
+
+    blocks.append(footer)
+
+    # --------------------------------------------------------
+    # ذخیره قیمت‌های فعلی
+    # --------------------------------------------------------
+
+    save_current_prices(
+        current_prices
+    )
+
+    return "\n\n".join(
+        blocks
+    )
+
+
+# ============================================================
+# ارسال پیام به تلگرام
+# ============================================================
 
 def send_to_telegram(text):
-    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-    payload = {"chat_id": TELEGRAM_CHAT_ID, "text": text, "parse_mode": "HTML"}
-    resp = requests.post(url, data=payload, timeout=15)
-    if resp.status_code != 200:
-        print(f"خطا در ارسال به تلگرام: {resp.status_code} - {resp.text}")
-        sys.exit(1)
-    print("پیام با موفقیت ارسال شد.")
 
+    url = (
+        "https://api.telegram.org/"
+        f"bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+    )
+
+    payload = {
+        "chat_id": TELEGRAM_CHAT_ID,
+        "text": text,
+        "parse_mode": "HTML",
+        "disable_web_page_preview": True,
+    }
+
+    response = requests.post(
+        url,
+        data=payload,
+        timeout=15
+    )
+
+    if response.status_code != 200:
+
+        print(
+            "خطا در ارسال به تلگرام:\n"
+            f"{response.status_code}\n"
+            f"{response.text}"
+        )
+
+        sys.exit(1)
+
+    print(
+        "پیام با موفقیت ارسال شد."
+    )
+
+
+# ============================================================
+# نمایش تمام نمادهای API
+# ============================================================
 
 def list_all_symbols():
     """
-    این تابع برای اینه که خودت لیست کامل نمادهای در دسترس API رو با کلید واقعی
-    خودت ببینی. کافیه اسکریپت رو این‌طوری اجرا کنی:
+    برای مشاهده تمام نمادهای موجود در API:
+
         python post_prices.py list
     """
-    data = get_all_prices()
-    for section_name, section_key in [("ارز", "currency"), ("طلا و سکه", "gold"), ("ارز دیجیتال", "cryptocurrency")]:
-        items = data.get(section_key, [])
-        print(f"\n=== {section_name} ({len(items)} نماد) ===")
-        for it in items:
-            print(f"  symbol={it.get('symbol')!r}  name={it.get('name') or it.get('name_en')}")
 
+    data = get_all_prices()
+
+    sections = [
+        ("ارز", "currency"),
+        ("طلا و سکه", "gold"),
+        ("ارز دیجیتال", "cryptocurrency"),
+    ]
+
+    for section_name, section_key in sections:
+
+        items = data.get(
+            section_key,
+            []
+        )
+
+        print(
+            f"\n=== {section_name} "
+            f"({len(items)} نماد) ==="
+        )
+
+        for item in items:
+
+            symbol = item.get(
+                "symbol"
+            )
+
+            name = (
+                item.get("name")
+                or item.get("name_en")
+            )
+
+            print(
+                f"  symbol={symbol!r} "
+                f"name={name}"
+            )
+
+
+# ============================================================
+# اجرای برنامه
+# ============================================================
 
 if __name__ == "__main__":
-    if len(sys.argv) > 1 and sys.argv[1] == "list":
-        list_all_symbols()
+
+    # نمایش لیست نمادها
+    if (
+        len(sys.argv) > 1
+        and sys.argv[1] == "list"
+    ):
+
+        try:
+            list_all_symbols()
+
+        except requests.RequestException as error:
+
+            print(
+                f"خطا در دریافت اطلاعات API: {error}"
+            )
+
+            sys.exit(1)
+
+    # اجرای عادی
     else:
-        message = build_message()
-        print(message)
-        send_to_telegram(message)
+
+        try:
+
+            message = build_message()
+
+            print("\n" + message)
+
+            send_to_telegram(
+                message
+            )
+
+        except requests.RequestException as error:
+
+            print(
+                f"خطا در دریافت اطلاعات از API: {error}"
+            )
+
+            sys.exit(1)
+
+        except Exception as error:
+
+            print(
+                f"خطای غیرمنتظره: {error}"
+            )
+
+            sys.exit(1)
