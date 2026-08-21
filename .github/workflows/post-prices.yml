@@ -1,0 +1,29 @@
+name: Post Prices to Telegram
+
+on:
+  schedule:
+    # هر ۱۵ دقیقه اجرا میشه (زمان به وقت UTC هست)
+    - cron: "*/15 * * * *"
+  workflow_dispatch: {}   # اجازه اجرای دستی هم از تب Actions
+
+jobs:
+  post-prices:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install requests
+
+      - name: Run script
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          NAVASAN_API_KEY: ${{ secrets.NAVASAN_API_KEY }}
+        run: python post_prices.py
