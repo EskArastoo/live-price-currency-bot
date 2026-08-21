@@ -7,13 +7,16 @@
 اجرا:
     python post_prices.py
 
+برای مشاهده تمام نمادهای API:
+    python post_prices.py list
+
 Environment Variables:
     TELEGRAM_BOT_TOKEN
     TELEGRAM_CHAT_ID
     BRSAPI_KEY
 
 فایل last_prices.json کنار اسکریپت ذخیره می‌شود
-تا قیمت اجرای قبلی برای نمایش تغییرات در دسترس باشد.
+تا قیمت اجرای قبلی برای نمایش افزایش یا کاهش در دسترس باشد.
 """
 
 import os
@@ -27,7 +30,7 @@ from zoneinfo import ZoneInfo
 
 
 # ============================================================
-# تنظیمات
+# تنظیمات اصلی
 # ============================================================
 
 jdatetime.set_locale("fa_IR")
@@ -37,6 +40,7 @@ TEHRAN_TZ = ZoneInfo("Asia/Tehran")
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 BRSAPI_KEY = os.environ.get("BRSAPI_KEY")
+
 
 if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID or not BRSAPI_KEY:
     print(
@@ -64,8 +68,12 @@ HISTORY_FILE = os.path.join(
 )
 
 
+# نام کانال
+CHANNEL_USERNAME = "@LivePriceCurrency"
+
+
 # ============================================================
-# نمادها
+# نمادهای مورد استفاده
 # ============================================================
 
 CURRENCY_SYMBOLS = [
@@ -85,7 +93,7 @@ GOLD_SYMBOLS = [
 ]
 
 
-# سکه یک گرمی حذف شد
+# سکه یک گرمی عمداً حذف شده است.
 COIN_SYMBOLS = [
     ("IR_COIN_QUARTER", "ربع سکه"),
     ("IR_COIN_HALF", "نیم سکه"),
@@ -103,7 +111,7 @@ CRYPTO_SYMBOLS = [
 
 
 # ============================================================
-# تبدیل اعداد
+# تبدیل اعداد به فارسی
 # ============================================================
 
 EN_TO_FA_DIGITS = str.maketrans(
@@ -113,11 +121,17 @@ EN_TO_FA_DIGITS = str.maketrans(
 
 
 def to_fa_digits(text):
+    """تبدیل اعداد انگلیسی به اعداد فارسی."""
     return str(text).translate(EN_TO_FA_DIGITS)
 
 
 def fa_number(value):
-    """فرمت قیمت‌های معمولی."""
+    """
+    فرمت قیمت‌های معمولی.
+
+    مثال:
+        1025000 -> ۱,۰۲۵,۰۰۰
+    """
 
     try:
         value = float(value)
@@ -130,7 +144,13 @@ def fa_number(value):
 
 
 def fa_change_number(value):
-    """فرمت مقدار تغییر قیمت."""
+    """
+    فرمت مقدار تغییر قیمت.
+
+    مثال:
+        2500 -> +۲,۵۰۰
+        -700 -> -۷۰۰
+    """
 
     try:
         value = float(value)
@@ -146,7 +166,15 @@ def fa_change_number(value):
 
 
 def fa_crypto_number(value):
-    """فرمت قیمت کریپتو."""
+    """
+    فرمت قیمت ارز دیجیتال.
+
+    اعداد بزرگ:
+        117500 -> ۱۱۷,۵۰۰
+
+    اعداد کوچک:
+        3.10 -> ۳.۱۰
+    """
 
     try:
         value = float(value)
@@ -162,10 +190,11 @@ def fa_crypto_number(value):
 
 
 # ============================================================
-# دریافت اطلاعات API
+# دریافت قیمت‌ها از API
 # ============================================================
 
 def get_all_prices():
+    """دریافت تمام قیمت‌ها از BRS API."""
 
     url = (
         "https://Api.BrsApi.ir/Market/Gold_Currency.php"
@@ -184,10 +213,11 @@ def get_all_prices():
 
 
 # ============================================================
-# تاریخچه قیمت
+# مدیریت تاریخچه قیمت
 # ============================================================
 
 def load_previous_prices():
+    """خواندن قیمت‌های اجرای قبلی."""
 
     if not os.path.exists(HISTORY_FILE):
         return {}
@@ -214,6 +244,9 @@ def load_previous_prices():
 
 
 def save_current_prices(prices):
+    """
+    ذخیره قیمت‌های فعلی به‌صورت امن.
+    """
 
     temp_file = HISTORY_FILE + ".tmp"
 
@@ -241,6 +274,7 @@ def save_current_prices(prices):
 # ============================================================
 
 def find_by_symbol(items, symbol):
+    """پیدا کردن یک نماد در لیست API."""
 
     for item in items or []:
 
@@ -251,7 +285,7 @@ def find_by_symbol(items, symbol):
 
 
 # ============================================================
-# تشخیص تغییر
+# تشخیص تغییر قیمت
 # ============================================================
 
 def get_price_change(
@@ -259,6 +293,16 @@ def get_price_change(
     current_price,
     previous_prices
 ):
+    """
+    مقایسه قیمت فعلی با اجرای قبلی.
+
+    خروجی:
+
+        ("up", change)
+        ("down", change)
+        ("same", 0)
+        (None, None)
+    """
 
     previous_price = previous_prices.get(
         symbol
@@ -268,6 +312,7 @@ def get_price_change(
         return None, None
 
     try:
+
         previous_price = float(
             previous_price
         )
@@ -276,7 +321,10 @@ def get_price_change(
             current_price
         )
 
-    except (ValueError, TypeError):
+    except (
+        ValueError,
+        TypeError
+    ):
 
         return None, None
 
@@ -296,6 +344,18 @@ def trend_html(
     current_price,
     previous_prices
 ):
+    """
+    نمایش تغییر قیمت.
+
+    افزایش:
+        🟢 (+۲,۵۰۰)
+
+    کاهش:
+        🔴 (-۷۰۰)
+
+    بدون تغییر:
+        چیزی نمایش داده نمی‌شود.
+    """
 
     direction, change = get_price_change(
         symbol,
@@ -321,10 +381,11 @@ def trend_html(
 
 
 # ============================================================
-# تاریخ و ساعت
+# تاریخ و ساعت تهران
 # ============================================================
 
 def jalali_date():
+    """تاریخ شمسی ایران."""
 
     tehran_now = datetime.now(
         TEHRAN_TZ
@@ -342,6 +403,7 @@ def jalali_date():
 
 
 def tehran_time():
+    """ساعت تهران."""
 
     tehran_now = datetime.now(
         TEHRAN_TZ
@@ -365,6 +427,13 @@ def render_price_row(
     is_usd=False,
     is_crypto=False
 ):
+    """
+    ساخت یک ردیف قیمت.
+
+    مثال:
+
+    ▫️ دلار آمریکا: ۱۰۲,۵۰۰ تومان 🟢 (+۲,۵۰۰)
+    """
 
     item = find_by_symbol(
         items,
@@ -379,34 +448,40 @@ def render_price_row(
     if price is None:
         return None, None
 
+    # ذخیره قیمت فعلی
     current_prices[symbol] = price
 
+    # تغییر قیمت
     change_html = trend_html(
         symbol,
         price,
         previous_prices
     )
 
-    # ----------------------------
-    # قیمت دلاری / کریپتو
-    # ----------------------------
+    # --------------------------------------------------------
+    # قیمت‌های دلاری
+    # --------------------------------------------------------
 
     if is_usd or is_crypto:
 
         if is_crypto:
-            price_text = fa_crypto_number(price)
+            price_text = fa_crypto_number(
+                price
+            )
         else:
-            price_text = fa_number(price)
+            price_text = fa_number(
+                price
+            )
 
         row = (
             f"▫️ {label}: "
-            f"<b>${price_text}</b>"
+            f"<b>{price_text}</b> دلار"
             f"{change_html}"
         )
 
-    # ----------------------------
+    # --------------------------------------------------------
     # قیمت‌های تومانی
-    # ----------------------------
+    # --------------------------------------------------------
 
     else:
 
@@ -436,7 +511,7 @@ def render_price_row(
 
 
 # ============================================================
-# ساخت بخش
+# ساخت یک بخش
 # ============================================================
 
 def render_section(
@@ -449,6 +524,7 @@ def render_section(
     is_usd=False,
     is_crypto=False
 ):
+    """ساخت یک بخش مثل ارز، طلا، سکه یا کریپتو."""
 
     rows = []
     directions = []
@@ -492,6 +568,9 @@ def render_section(
 # ============================================================
 
 def market_summary(directions):
+    """
+    نمایش وضعیت کلی بازار.
+    """
 
     up_count = directions.count(
         "up"
@@ -536,10 +615,14 @@ def market_summary(directions):
 
 
 # ============================================================
-# ساخت پیام
+# ساخت پیام نهایی
 # ============================================================
 
 def build_message():
+
+    # --------------------------------------------------------
+    # دریافت اطلاعات
+    # --------------------------------------------------------
 
     data = get_all_prices()
 
@@ -566,9 +649,9 @@ def build_message():
 
     blocks = []
 
-    # ========================================================
+    # --------------------------------------------------------
     # Header
-    # ========================================================
+    # --------------------------------------------------------
 
     blocks.append(
         "💹 <b>نبض بازار</b>\n"
@@ -576,13 +659,9 @@ def build_message():
         f"⏱ {tehran_time()}"
     )
 
-    # ========================================================
-    # وضعیت کلی
-    # ========================================================
-
-    # ========================================================
+    # --------------------------------------------------------
     # ارز
-    # ========================================================
+    # --------------------------------------------------------
 
     currency_block, currency_directions = render_section(
         title="ارز",
@@ -594,6 +673,7 @@ def build_message():
     )
 
     if currency_block:
+
         blocks.append(
             currency_block
         )
@@ -602,9 +682,9 @@ def build_message():
         currency_directions
     )
 
-    # ========================================================
+    # --------------------------------------------------------
     # طلا
-    # ========================================================
+    # --------------------------------------------------------
 
     gold_block, gold_directions = render_section(
         title="طلا",
@@ -616,6 +696,7 @@ def build_message():
     )
 
     if gold_block:
+
         blocks.append(
             gold_block
         )
@@ -624,9 +705,9 @@ def build_message():
         gold_directions
     )
 
-    # ========================================================
+    # --------------------------------------------------------
     # سکه
-    # ========================================================
+    # --------------------------------------------------------
 
     coin_block, coin_directions = render_section(
         title="سکه",
@@ -638,6 +719,7 @@ def build_message():
     )
 
     if coin_block:
+
         blocks.append(
             coin_block
         )
@@ -646,9 +728,9 @@ def build_message():
         coin_directions
     )
 
-    # ========================================================
+    # --------------------------------------------------------
     # کریپتو
-    # ========================================================
+    # --------------------------------------------------------
 
     crypto_block, crypto_directions = render_section(
         title="کریپتو",
@@ -661,6 +743,7 @@ def build_message():
     )
 
     if crypto_block:
+
         blocks.append(
             crypto_block
         )
@@ -669,9 +752,9 @@ def build_message():
         crypto_directions
     )
 
-    # ========================================================
+    # --------------------------------------------------------
     # خلاصه بازار
-    # ========================================================
+    # --------------------------------------------------------
 
     if all_directions:
 
@@ -682,9 +765,18 @@ def build_message():
             )
         )
 
-    # ========================================================
+    # --------------------------------------------------------
+    # خط پایانی و نام کانال
+    # --------------------------------------------------------
+
+    blocks.append(
+        "──────────────\n"
+        f"📡 {CHANNEL_USERNAME}"
+    )
+
+    # --------------------------------------------------------
     # ذخیره قیمت‌های فعلی
-    # ========================================================
+    # --------------------------------------------------------
 
     save_current_prices(
         current_prices
@@ -696,7 +788,7 @@ def build_message():
 
 
 # ============================================================
-# ارسال به تلگرام
+# ارسال پیام به تلگرام
 # ============================================================
 
 def send_to_telegram(text):
@@ -735,10 +827,17 @@ def send_to_telegram(text):
 
 
 # ============================================================
-# نمایش نمادهای API
+# نمایش تمام نمادهای API
 # ============================================================
 
 def list_all_symbols():
+    """
+    نمایش تمام نمادهای موجود در API.
+
+    اجرا:
+
+        python post_prices.py list
+    """
 
     data = get_all_prices()
 
@@ -762,9 +861,18 @@ def list_all_symbols():
 
         for item in items:
 
+            symbol = item.get(
+                "symbol"
+            )
+
+            name = (
+                item.get("name")
+                or item.get("name_en")
+            )
+
             print(
-                f"  symbol={item.get('symbol')!r} "
-                f"name={item.get('name') or item.get('name_en')}"
+                f"  symbol={symbol!r} "
+                f"name={name}"
             )
 
 
@@ -774,12 +882,17 @@ def list_all_symbols():
 
 if __name__ == "__main__":
 
+    # --------------------------------------------------------
+    # دستور list
+    # --------------------------------------------------------
+
     if (
         len(sys.argv) > 1
         and sys.argv[1] == "list"
     ):
 
         try:
+
             list_all_symbols()
 
         except requests.RequestException as error:
@@ -789,6 +902,10 @@ if __name__ == "__main__":
             )
 
             sys.exit(1)
+
+    # --------------------------------------------------------
+    # اجرای عادی
+    # --------------------------------------------------------
 
     else:
 
