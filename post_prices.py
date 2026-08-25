@@ -71,7 +71,6 @@ HISTORY_FILE = os.path.join(
     "last_prices.json"
 )
 
-
 CHANNEL_USERNAME = "@LivePriceCurrency"
 
 
@@ -677,42 +676,13 @@ def build_message():
         )
 
     # --------------------------------------------------------
-    # وضعیت داده
-    # --------------------------------------------------------
-
-    latest_business_time = None
-
-    for item in data:
-
-        business_time = item.get(
-            "businessTime"
-        )
-
-        if business_time:
-
-            if (
-                latest_business_time is None
-                or business_time > latest_business_time
-            ):
-                latest_business_time = business_time
-
-    # --------------------------------------------------------
     # Footer
     # --------------------------------------------------------
 
     footer = [
-        "──────────────"
-    ]
-
-    if latest_business_time:
-
-        footer.append(
-            "📡 منبع: Servix"
-        )
-
-    footer.append(
+        "──────────────",
         f"📢 {CHANNEL_USERNAME}"
-    )
+    ]
 
     blocks.append(
         "\n".join(footer)
