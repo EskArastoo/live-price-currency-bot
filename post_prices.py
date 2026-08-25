@@ -9,8 +9,11 @@ Environment Variables:
     TELEGRAM_CHAT_ID
     SERVIX_API_KEY
 
-فایل last_prices.json کنار اسکریپت ذخیره می‌شود
-تا قیمت اجرای قبلی برای نمایش افزایش یا کاهش در دسترس باشد.
+قیمت‌های ریالی Servix به ریال دریافت می‌شوند
+و برای نمایش در کانال به تومان تبدیل می‌شوند.
+
+فایل last_prices.json برای مقایسه قیمت قبلی
+و نمایش افزایش / کاهش استفاده می‌شود.
 """
 
 import os
@@ -47,10 +50,10 @@ if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID or not SERVIX_API_KEY:
 
 
 # ============================================================
-# تنظیمات API
+# Servix
 # ============================================================
 
-SERVIX_BASE_URL = "https://servix.cc/api/v1"
+SERVIX_URL = "https://servix.cc/api/v1/assets"
 
 HEADERS = {
     "X-API-Key": SERVIX_API_KEY,
@@ -73,31 +76,41 @@ CHANNEL_USERNAME = "@LivePriceCurrency"
 
 
 # ============================================================
-# نمادهای مورد استفاده
+# نمادهای ارز
 # ============================================================
 
 CURRENCY_SYMBOLS = [
-    ("USD", "دلار آمریکا"),
-    ("EUR", "یورو"),
-    ("GBP", "پوند انگلیس"),
-    ("AED", "درهم امارات"),
-    ("CNY", "یوان چین"),
-    ("TRY", "لیر ترکیه"),
+    ("USD_RLS", "دلار آمریکا"),
+    ("USDT_RLS", "دلار تتر"),
+    ("EUR_RLS", "یورو"),
+    ("GBP_RLS", "پوند انگلیس"),
+    ("AED_RLS", "درهم امارات"),
+    ("CNY_RLS", "یوان چین"),
+    ("TRY_RLS", "لیر ترکیه"),
 ]
 
+
+# ============================================================
+# نمادهای طلا
+# ============================================================
 
 GOLD_SYMBOLS = [
-    ("18K", "طلای ۱۸ عیار"),
-    ("24K", "طلای ۲۴ عیار"),
-    ("MES", "مثقال طلا"),
+    ("GOLD_18_RLS", "طلای ۱۸ عیار"),
+    ("GOLD_24_RLS", "طلای ۲۴ عیار"),
+    ("GOLD_MESGHAL_RLS", "مثقال طلا"),
+    ("GOLD_OUNCE_USD", "انس جهانی طلا"),
 ]
 
 
+# ============================================================
+# نمادهای سکه
+# ============================================================
+
 COIN_SYMBOLS = [
-    ("SEK", "سکه امامی"),
-    ("AZ", "سکه بهار آزادی"),
-    ("1/2", "نیم سکه"),
-    ("1/4", "ربع سکه"),
+    ("SEKKEH_RLS", "سکه امامی"),
+    ("BAHAR_RLS", "سکه بهار آزادی"),
+    ("NIM_SEKKEH_RLS", "نیم سکه"),
+    ("ROB_SEKKEH_RLS", "ربع سکه"),
 ]
 
 
@@ -112,12 +125,13 @@ EN_TO_FA_DIGITS = str.maketrans(
 
 
 def to_fa_digits(text):
-    """تبدیل اعداد انگلیسی به اعداد فارسی."""
     return str(text).translate(EN_TO_FA_DIGITS)
 
 
 def fa_number(value):
-    """فرمت قیمت‌های ریالی."""
+    """
+    نمایش عدد با جداکننده هزارگان.
+    """
 
     try:
         value = float(value)
@@ -129,8 +143,25 @@ def fa_number(value):
     )
 
 
+def fa_decimal_number(value):
+    """
+    نمایش عدد اعشاری برای انس جهانی.
+    """
+
+    try:
+        value = float(value)
+    except (ValueError, TypeError):
+        return "نامشخص"
+
+    return to_fa_digits(
+        f"{value:,.2f}"
+    )
+
+
 def fa_change_number(value):
-    """فرمت مقدار تغییر قیمت."""
+    """
+    نمایش مقدار تغییر قیمت.
+    """
 
     try:
         value = float(value)
@@ -151,35 +182,44 @@ def fa_change_number(value):
 
 def get_all_prices():
     """
-    دریافت تمام قیمت‌های مورد نیاز از Servix.
+    دریافت تمام قیمت‌های مورد نیاز با یک درخواست API.
 
-    همه نمادهای مورد نیاز در یک درخواست دریافت می‌شوند.
+    مجموع نمادها:
+        16 نماد
+
+    Servix اجازه دریافت حداکثر 20 نماد
+    در یک درخواست را می‌دهد.
     """
 
     codes = [
-        "USD",
-        "EUR",
-        "GBP",
-        "AED",
-        "CNY",
-        "TRY",
-        "18K",
-        "24K",
-        "MES",
-        "SEK",
-        "AZ",
-        "1/2",
-        "1/4",
-    ]
+        # ارز
+        "USD_RLS",
+        "USDT_RLS",
+        "EUR_RLS",
+        "GBP_RLS",
+        "AED_RLS",
+        "CNY_RLS",
+        "TRY_RLS",
 
-    url = f"{SERVIX_BASE_URL}/assets"
+        # طلا
+        "GOLD_18_RLS",
+        "GOLD_24_RLS",
+        "GOLD_MESGHAL_RLS",
+        "GOLD_OUNCE_USD",
+
+        # سکه
+        "SEKKEH_RLS",
+        "BAHAR_RLS",
+        "NIM_SEKKEH_RLS",
+        "ROB_SEKKEH_RLS",
+    ]
 
     params = {
         "codes": ",".join(codes)
     }
 
     response = requests.get(
-        url,
+        SERVIX_URL,
         headers=HEADERS,
         params=params,
         timeout=20
@@ -187,20 +227,57 @@ def get_all_prices():
 
     response.raise_for_status()
 
-    return response.json()
+    data = response.json()
+
+    if not isinstance(data, list):
+        raise ValueError(
+            "پاسخ Servix فرمت مورد انتظار را ندارد."
+        )
+
+    return data
 
 
 # ============================================================
-# مدیریت تاریخچه قیمت
+# تبدیل پاسخ API به دیکشنری
+# ============================================================
+
+def make_price_map(items):
+    """
+    پاسخ Servix را به شکل زیر تبدیل می‌کند:
+
+    {
+        "USD_RLS": {
+            ...
+        }
+    }
+    """
+
+    result = {}
+
+    for item in items:
+
+        if not isinstance(item, dict):
+            continue
+
+        code = item.get("code")
+
+        if code:
+            result[code] = item
+
+    return result
+
+
+# ============================================================
+# مدیریت تاریخچه
 # ============================================================
 
 def load_previous_prices():
-    """خواندن قیمت‌های اجرای قبلی."""
 
     if not os.path.exists(HISTORY_FILE):
         return {}
 
     try:
+
         with open(
             HISTORY_FILE,
             "r",
@@ -222,7 +299,6 @@ def load_previous_prices():
 
 
 def save_current_prices(prices):
-    """ذخیره قیمت‌های فعلی به‌صورت امن."""
 
     temp_file = HISTORY_FILE + ".tmp"
 
@@ -246,94 +322,7 @@ def save_current_prices(prices):
 
 
 # ============================================================
-# پیدا کردن نماد
-# ============================================================
-
-def find_by_symbol(items, symbol):
-    """پیدا کردن نماد در پاسخ Servix."""
-
-    if isinstance(items, dict):
-        item = items.get(symbol)
-
-        if isinstance(item, dict):
-            return item
-
-    for item in items or []:
-
-        if not isinstance(item, dict):
-            continue
-
-        if item.get("symbol") == symbol:
-            return item
-
-        if item.get("code") == symbol:
-            return item
-
-    return None
-
-
-# ============================================================
-# استخراج لیست دارایی‌ها
-# ============================================================
-
-def extract_items(data):
-    """
-    تبدیل پاسخ‌های مختلف API به یک لیست واحد.
-
-    بسته به ساختار پاسخ API ممکن است داده‌ها
-    داخل assets / data / results باشند.
-    """
-
-    if isinstance(data, list):
-        return data
-
-    if not isinstance(data, dict):
-        return []
-
-    for key in (
-        "assets",
-        "data",
-        "results",
-        "items"
-    ):
-        value = data.get(key)
-
-        if isinstance(value, list):
-            return value
-
-        if isinstance(value, dict):
-            return value
-
-    return data
-
-
-# ============================================================
-# استخراج قیمت
-# ============================================================
-
-def extract_price(item):
-    """استخراج قیمت از آبجکت Servix."""
-
-    if not isinstance(item, dict):
-        return None
-
-    for key in (
-        "price",
-        "value",
-        "last",
-        "lastPrice",
-        "currentPrice"
-    ):
-        value = item.get(key)
-
-        if value is not None:
-            return value
-
-    return None
-
-
-# ============================================================
-# تشخیص تغییر قیمت
+# تغییر قیمت
 # ============================================================
 
 def get_price_change(
@@ -341,16 +330,6 @@ def get_price_change(
     current_price,
     previous_prices
 ):
-    """
-    مقایسه قیمت فعلی با اجرای قبلی.
-
-    خروجی:
-
-        ("up", change)
-        ("down", change)
-        ("same", 0)
-        (None, None)
-    """
 
     previous_price = previous_prices.get(
         symbol
@@ -390,9 +369,9 @@ def get_price_change(
 def trend_html(
     symbol,
     current_price,
-    previous_prices
+    previous_prices,
+    is_ounce=False
 ):
-    """نمایش تغییر قیمت."""
 
     direction, change = get_price_change(
         symbol,
@@ -402,16 +381,27 @@ def trend_html(
 
     if direction == "up":
 
+        if is_ounce:
+            change_text = fa_decimal_number(change)
+        else:
+            change_text = fa_change_number(change)
+
         return (
-            f"  🟢 "
-            f"(<b>{fa_change_number(change)}</b>)"
+            f" 🟢 "
+            f"(<b>+{change_text.replace('−', '-')}</b>)"
         )
 
     if direction == "down":
 
+        if is_ounce:
+            change_text = fa_decimal_number(abs(change))
+            change_text = "-" + change_text
+        else:
+            change_text = fa_change_number(change)
+
         return (
-            f"  🔴 "
-            f"(<b>{fa_change_number(change)}</b>)"
+            f" 🔴 "
+            f"(<b>{change_text}</b>)"
         )
 
     return ""
@@ -422,7 +412,6 @@ def trend_html(
 # ============================================================
 
 def jalali_date():
-    """تاریخ شمسی ایران."""
 
     tehran_now = datetime.now(
         TEHRAN_TZ
@@ -440,7 +429,6 @@ def jalali_date():
 
 
 def tehran_time():
-    """ساعت تهران."""
 
     tehran_now = datetime.now(
         TEHRAN_TZ
@@ -452,41 +440,102 @@ def tehran_time():
 
 
 # ============================================================
+# تبدیل ریال به تومان
+# ============================================================
+
+def rial_to_toman(value):
+    """
+    Servix قیمت‌های RLS را به ریال می‌دهد.
+    برای نمایش در کانال به تومان تبدیل می‌کنیم.
+    """
+
+    try:
+        return float(value) / 10
+    except (
+        ValueError,
+        TypeError
+    ):
+        return None
+
+
+# ============================================================
 # ساخت ردیف قیمت
 # ============================================================
 
 def render_price_row(
     symbol,
     label,
-    items,
+    price_map,
     current_prices,
     previous_prices
 ):
-    """ساخت یک ردیف قیمت."""
 
-    item = find_by_symbol(
-        items,
-        symbol
-    )
+    item = price_map.get(symbol)
 
     if not item:
+
         print(
-            f"هشدار: نماد {symbol} پیدا نشد."
+            f"هشدار: نماد {symbol} در پاسخ Servix وجود ندارد."
         )
+
         return None
 
-    price = extract_price(item)
+    raw_value = item.get("value")
+
+    if raw_value is None:
+
+        print(
+            f"هشدار: مقدار {symbol} موجود نیست."
+        )
+
+        return None
+
+    # --------------------------------------------------------
+    # اونس جهانی
+    # --------------------------------------------------------
+
+    if symbol == "GOLD_OUNCE_USD":
+
+        try:
+            price = float(raw_value)
+        except (
+            ValueError,
+            TypeError
+        ):
+            return None
+
+        current_prices[symbol] = price
+
+        change_html = trend_html(
+            symbol,
+            price,
+            previous_prices,
+            is_ounce=True
+        )
+
+        price_text = fa_decimal_number(
+            price
+        )
+
+        return (
+            f"▫️ {label}: "
+            f"<b>{price_text}</b> دلار"
+            f"{change_html}"
+        )
+
+    # --------------------------------------------------------
+    # قیمت‌های ریالی
+    # --------------------------------------------------------
+
+    price = rial_to_toman(
+        raw_value
+    )
 
     if price is None:
-        print(
-            f"هشدار: قیمت {symbol} پیدا نشد."
-        )
         return None
 
-    # ذخیره قیمت فعلی
     current_prices[symbol] = price
 
-    # تغییر قیمت
     change_html = trend_html(
         symbol,
         price,
@@ -497,26 +546,11 @@ def render_price_row(
         price
     )
 
-    # --------------------------------------------------------
-    # واحد
-    # --------------------------------------------------------
-
-    unit = item.get(
-        "unit",
-        "تومان"
-    )
-
-    # اگر API ریال برگرداند،
-    # آن را به تومان تبدیل نمی‌کنیم مگر اینکه
-    # خود API unit را مشخص کرده باشد.
-    row = (
+    return (
         f"▫️ {label}: "
-        f"<b>{price_text}</b> "
-        f"{unit}"
+        f"<b>{price_text}</b> تومان"
         f"{change_html}"
     )
-
-    return row
 
 
 # ============================================================
@@ -527,11 +561,10 @@ def render_section(
     title,
     icon,
     symbol_list,
-    items,
+    price_map,
     current_prices,
     previous_prices
 ):
-    """ساخت یک بخش مثل ارز، طلا یا سکه."""
 
     rows = []
 
@@ -540,7 +573,7 @@ def render_section(
         row = render_price_row(
             symbol=symbol,
             label=label,
-            items=items,
+            price_map=price_map,
             current_prices=current_prices,
             previous_prices=previous_prices
         )
@@ -564,16 +597,18 @@ def render_section(
 def build_message():
 
     # --------------------------------------------------------
-    # دریافت اطلاعات
+    # دریافت قیمت‌ها
     # --------------------------------------------------------
 
     data = get_all_prices()
 
+    price_map = make_price_map(
+        data
+    )
+
     previous_prices = load_previous_prices()
 
     current_prices = {}
-
-    items = extract_items(data)
 
     blocks = []
 
@@ -595,7 +630,7 @@ def build_message():
         title="ارز",
         icon="💵",
         symbol_list=CURRENCY_SYMBOLS,
-        items=items,
+        price_map=price_map,
         current_prices=current_prices,
         previous_prices=previous_prices
     )
@@ -613,7 +648,7 @@ def build_message():
         title="طلا",
         icon="🥇",
         symbol_list=GOLD_SYMBOLS,
-        items=items,
+        price_map=price_map,
         current_prices=current_prices,
         previous_prices=previous_prices
     )
@@ -631,7 +666,7 @@ def build_message():
         title="سکه",
         icon="🪙",
         symbol_list=COIN_SYMBOLS,
-        items=items,
+        price_map=price_map,
         current_prices=current_prices,
         previous_prices=previous_prices
     )
@@ -642,16 +677,49 @@ def build_message():
         )
 
     # --------------------------------------------------------
-    # خط پایانی
+    # وضعیت داده
     # --------------------------------------------------------
 
+    latest_business_time = None
+
+    for item in data:
+
+        business_time = item.get(
+            "businessTime"
+        )
+
+        if business_time:
+
+            if (
+                latest_business_time is None
+                or business_time > latest_business_time
+            ):
+                latest_business_time = business_time
+
+    # --------------------------------------------------------
+    # Footer
+    # --------------------------------------------------------
+
+    footer = [
+        "──────────────"
+    ]
+
+    if latest_business_time:
+
+        footer.append(
+            "📡 منبع: Servix"
+        )
+
+    footer.append(
+        f"📢 {CHANNEL_USERNAME}"
+    )
+
     blocks.append(
-        "──────────────\n"
-        f"📡 {CHANNEL_USERNAME}"
+        "\n".join(footer)
     )
 
     # --------------------------------------------------------
-    # ذخیره قیمت‌های فعلی
+    # ذخیره قیمت‌ها
     # --------------------------------------------------------
 
     save_current_prices(
@@ -664,7 +732,7 @@ def build_message():
 
 
 # ============================================================
-# ارسال پیام به تلگرام
+# ارسال به تلگرام
 # ============================================================
 
 def send_to_telegram(text):
@@ -703,41 +771,40 @@ def send_to_telegram(text):
 
 
 # ============================================================
-# نمایش نمادهای API
+# نمایش نمادهای دریافت‌شده
 # ============================================================
 
 def list_all_symbols():
 
     data = get_all_prices()
 
-    items = extract_items(data)
-
     print(
-        f"\n=== نمادهای دریافت‌شده "
-        f"({len(items)}) ==="
+        f"\n=== {len(data)} نماد دریافت شد ==="
     )
 
-    for item in items:
+    for item in data:
 
-        if not isinstance(item, dict):
-            continue
-
-        symbol = (
-            item.get("symbol")
-            or item.get("code")
+        code = item.get(
+            "code"
         )
 
-        name = (
-            item.get("name")
-            or item.get("name_en")
+        name = item.get(
+            "labelFa"
         )
 
-        price = extract_price(item)
+        value = item.get(
+            "value"
+        )
+
+        business_time = item.get(
+            "businessTime"
+        )
 
         print(
-            f"symbol={symbol!r} "
-            f"name={name!r} "
-            f"price={price!r}"
+            f"{code} | "
+            f"{name} | "
+            f"{value} | "
+            f"{business_time}"
         )
 
 
@@ -746,10 +813,6 @@ def list_all_symbols():
 # ============================================================
 
 if __name__ == "__main__":
-
-    # --------------------------------------------------------
-    # دستور list
-    # --------------------------------------------------------
 
     if (
         len(sys.argv) > 1
@@ -763,14 +826,10 @@ if __name__ == "__main__":
         except requests.RequestException as error:
 
             print(
-                f"خطا در دریافت اطلاعات API: {error}"
+                f"خطا در دریافت اطلاعات Servix: {error}"
             )
 
             sys.exit(1)
-
-    # --------------------------------------------------------
-    # اجرای عادی
-    # --------------------------------------------------------
 
     else:
 
@@ -789,7 +848,7 @@ if __name__ == "__main__":
         except requests.RequestException as error:
 
             print(
-                f"خطا در دریافت اطلاعات از API: {error}"
+                f"خطا در دریافت اطلاعات Servix: {error}"
             )
 
             sys.exit(1)
