@@ -2,54 +2,43 @@ name: Post Prices to Telegram
 
 on:
   schedule:
-
     # 02:00 تا 10:00 تهران - هر 2 ساعت
     - cron: "30 22 * * *"
     - cron: "30 0 * * *"
     - cron: "30 2 * * *"
     - cron: "30 4 * * *"
-
     # 10:00 تا 22:00 تهران - هر 20 دقیقه
     - cron: "30,50 6-19 * * *"
     - cron: "10 7-20 * * *"
-
     # 22:00 تا 02:00 تهران - هر 30 دقیقه
     - cron: "30 18 * * *"
     - cron: "0,30 19 * * *"
     - cron: "0,30 20 * * *"
     - cron: "0,30 21 * * *"
-
+    # 00:00 تهران - خلاصه‌ی شبانه (بیشترین/کمترین روز) + پین‌کردن
+    - cron: "30 20 * * *"
   workflow_dispatch:
-
+    inputs:
+      mode:
+        description: "اجرای دستی: regular یا summary (خالی = regular)"
+        required: false
+        default: ""
 
 permissions:
   contents: write
-
 
 concurrency:
   group: post-prices
   cancel-in-progress: false
 
-
 jobs:
   post-prices:
     runs-on: ubuntu-latest
-
     steps:
-
-      # ------------------------------------------------------
-      # دریافت آخرین نسخه repository
-      # ------------------------------------------------------
-
       - name: Checkout repo
         uses: actions/checkout@v5
         with:
           fetch-depth: 0
-
-
-      # ------------------------------------------------------
-      # نصب Python
-      # ------------------------------------------------------
 
       - name: Set up Python
         uses: actions/setup-python@v6
@@ -57,44 +46,45 @@ jobs:
           python-version: "3.11"
           cache: "pip"
 
-
-      # ------------------------------------------------------
-      # نصب وابستگی‌ها
-      # ------------------------------------------------------
-
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-
-      # ------------------------------------------------------
-      # اجرای ربات
-      # ------------------------------------------------------
+      - name: Determine run mode
+        id: mode
+        run: |
+          MODE="regular"
+          if [ "${{ github.event.schedule }}" == "30 20 * * *" ]; then
+            MODE="summary"
+          fi
+          if [ -n "${{ github.event.inputs.mode }}" ]; then
+            MODE="${{ github.event.inputs.mode }}"
+          fi
+          echo "value=$MODE" >> "$GITHUB_OUTPUT"
 
       - name: Run script
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           SERVIX_API_KEY: ${{ secrets.SERVIX_API_KEY }}
-        run: python post_prices.py
-
-
-      # ------------------------------------------------------
-      # ذخیره قیمت‌های فعلی
-      # ------------------------------------------------------
+        run: python post_prices.py "${{ steps.mode.outputs.value }}"
 
       - name: Commit updated price history
         run: |
           git config user.name "price-bot"
           git config user.email "price-bot@users.noreply.github.com"
 
-          git add last_prices.json
+          for f in last_prices.json daily_stats.json last_pinned.json; do
+            if [ -f "$f" ]; then
+              git add "$f"
+            fi
+          done
 
           if git diff --cached --quiet; then
-            echo "Price history has no changes."
+            echo "No history files changed."
             exit 0
           fi
 
-          git commit -m "update price history [skip ci]"
+          git commit -m "update price/history state [skip ci]"
           git push
