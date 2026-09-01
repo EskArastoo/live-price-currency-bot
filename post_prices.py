@@ -187,19 +187,6 @@ def fa_change_number(value):
     return to_fa_digits(text)
 
 
-def fa_percent_number(value):
-    """نمایش درصد تغییر با دو رقم اعشار و علامت +/- خودکار."""
-
-    try:
-        value = float(value)
-    except (ValueError, TypeError):
-        return None
-
-    text = f"{value:+.2f}"
-
-    return to_fa_digits(text)
-
-
 # ============================================================
 # دریافت قیمت‌ها از Servix
 # ============================================================
@@ -377,10 +364,7 @@ def trend_html(
     is_ounce=False
 ):
     """
-    نمایش تغییر قیمت: فلش، مقدار تغییر، و درصد تغییر.
-
-    فلش‌ها: 🔼 برای افزایش، 🔽 برای کاهش
-    (این دو ایموجی خودشان رنگ سبز/قرمز دارند).
+    نمایش تغییر قیمت با دایره سبز/قرمز.
 
     نکته: fa_change_number خودش علامت +/- را اضافه می‌کند،
     پس اینجا دیگر نباید دوباره + دستی اضافه شود.
@@ -406,37 +390,11 @@ def trend_html(
         # fa_change_number خودش علامت +/- را دارد
         change_text = fa_change_number(change)
 
-    # --------------------------------------------------------
-    # درصد تغییر نسبت به قیمت قبلی
-    # --------------------------------------------------------
-
-    previous_price = previous_prices.get(symbol)
-
-    percent_text = ""
-
-    try:
-
-        percent = (
-            change / float(previous_price)
-        ) * 100
-
-        percent_fa = fa_percent_number(percent)
-
-        if percent_fa is not None:
-            percent_text = f" / {percent_fa}٪"
-
-    except (
-        TypeError,
-        ValueError,
-        ZeroDivisionError
-    ):
-        pass
-
-    arrow = "🔼" if direction == "up" else "🔽"
+    emoji = "🟢" if direction == "up" else "🔴"
 
     return (
-        f" {arrow} "
-        f"(<b>{change_text}{percent_text}</b>)"
+        f" {emoji} "
+        f"(<b>{change_text}</b>)"
     )
 
 
