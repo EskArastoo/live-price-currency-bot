@@ -22,7 +22,7 @@ import json
 import requests
 import jdatetime
 
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 
@@ -72,11 +72,6 @@ HISTORY_FILE = os.path.join(
 )
 
 CHANNEL_USERNAME = "@LivePriceCurrency"
-
-DAILY_STATS_FILE = os.path.join(
-    os.path.dirname(os.path.abspath(__file__)),
-    "daily_stats.json"
-)
 
 PINNED_FILE = os.path.join(
     os.path.dirname(os.path.abspath(__file__)),
@@ -446,100 +441,82 @@ def rial_to_toman(value):
 
 
 # ============================================================
-# مدیریت آمار روزانه (بیشترین/کمترین)
+# بیشترین/کمترین قیمت روز (مستقیم از کندل‌های Servix)
 # ============================================================
 
-def _today_key():
-    """کلید روز جاری بر اساس تاریخ تهران (میلادی، برای سادگی مقایسه)."""
+def _utc_text(dt):
+    """تبدیل زمان به قالب UTC مورد نیاز API."""
 
-    return datetime.now(TEHRAN_TZ).date().isoformat()
-
-
-def load_daily_stats():
-
-    if not os.path.exists(DAILY_STATS_FILE):
-        return {"date": _today_key(), "symbols": {}}
-
-    try:
-
-        with open(
-            DAILY_STATS_FILE,
-            "r",
-            encoding="utf-8"
-        ) as file:
-
-            data = json.load(file)
-
-        if isinstance(data, dict) and "symbols" in data:
-            return data
-
-    except (
-        json.JSONDecodeError,
-        OSError
-    ):
-        pass
-
-    return {"date": _today_key(), "symbols": {}}
-
-
-def save_daily_stats(stats):
-
-    temp_file = DAILY_STATS_FILE + ".tmp"
-
-    with open(
-        temp_file,
-        "w",
-        encoding="utf-8"
-    ) as file:
-
-        json.dump(
-            stats,
-            file,
-            ensure_ascii=False,
-            indent=2
-        )
-
-    os.replace(
-        temp_file,
-        DAILY_STATS_FILE
+    return dt.astimezone(timezone.utc).strftime(
+        "%Y-%m-%dT%H:%M:%SZ"
     )
 
 
-def track_daily_stats(current_prices):
+def summary_window():
     """
-    بیشترین و کمترین قیمت هرکدام از نمادهای مورد نظر خلاصه‌ی
-    شبانه را در طول روز جاری به‌روزرسانی می‌کند.
+    بازه‌ی روزی که باید خلاصه‌اش ساخته شود (به وقت تهران).
 
-    اگر روز عوض شده باشد (یعنی هنوز خلاصه‌ی دیروز خوانده نشده)
-    آمار به‌طور خودکار برای روز جدید از صفر شروع می‌شود.
+    اگر اجرا بعد از نیمه‌شب (قبل از ساعت ۶ صبح) باشد، یعنی خلاصه‌ی
+    دیروز؛ در غیر این صورت (مثلاً تست دستی) از ابتدای امروز تا الان.
     """
 
-    today = _today_key()
+    now = datetime.now(TEHRAN_TZ)
 
-    stats = load_daily_stats()
+    today_start = now.replace(
+        hour=0,
+        minute=0,
+        second=0,
+        microsecond=0
+    )
 
-    if stats.get("date") != today:
-        stats = {"date": today, "symbols": {}}
+    if now.hour < 6:
+        start = today_start - timedelta(days=1)
+        end = today_start
+    else:
+        start = today_start
+        end = now
 
-    for symbol, _label in DAILY_SUMMARY_SYMBOLS:
+    return start, end
 
-        price = current_prices.get(symbol)
 
-        if price is None:
+def fetch_day_range(symbol, start, end):
+    """
+    کمترین و بیشترین قیمت واقعی یک نماد در بازه‌ی داده‌شده.
+
+    از کندل‌های یک‌ساعته‌ی Servix استفاده می‌شود، پس به تعداد
+    اجراهای ربات در طول روز بستگی ندارد.
+    """
+
+    response = requests.get(
+        f"{SERVIX_URL}/{symbol}/ohlc",
+        headers=HEADERS,
+        params={
+            "interval": "1h",
+            "from": _utc_text(start),
+            "to": _utc_text(end),
+        },
+        timeout=20
+    )
+
+    response.raise_for_status()
+
+    candles = response.json().get("candles", [])
+
+    highs = []
+    lows = []
+
+    for candle in candles:
+
+        try:
+            highs.append(float(candle["high"]))
+            lows.append(float(candle["low"]))
+        except (KeyError, TypeError, ValueError):
             continue
 
-        entry = stats["symbols"].get(symbol)
+    if not highs or not lows:
+        return None
 
-        if entry is None:
-            stats["symbols"][symbol] = {
-                "min": price,
-                "max": price
-            }
-        else:
-            entry["min"] = min(entry["min"], price)
-            entry["max"] = max(entry["max"], price)
-
-    save_daily_stats(stats)
+    return min(lows), max(highs)
 
 
 # ============================================================
@@ -742,7 +719,6 @@ def build_message():
     blocks.append("\n".join(footer))
 
     save_current_prices(current_prices)
-    track_daily_stats(current_prices)
 
     return "\n\n".join(blocks)
 
@@ -753,42 +729,52 @@ def build_message():
 
 def build_summary_message():
     """
-    خلاصه‌ی بیشترین/کمترین قیمت دلار، طلا و سکه در طول روزی
-    که تازه تمام شده است؛ بر اساس داده‌های daily_stats.json.
+    خلاصه‌ی بیشترین/کمترین قیمت دلار، طلا و سکه برای یک روز کامل.
     """
 
-    stats = load_daily_stats()
-    symbols = stats.get("symbols", {})
+    start, end = summary_window()
 
-    blocks = [
-        "📅 <b>خلاصه‌ی شبانه‌ی بازار</b>\n"
-        f"🗓 {jalali_date()}"
-    ]
+    day_fa = to_fa_digits(
+        jdatetime.datetime.fromgregorian(
+            datetime=start
+        ).strftime("%A %d %B %Y")
+    )
 
     rows = []
 
     for symbol, label in DAILY_SUMMARY_SYMBOLS:
 
-        entry = symbols.get(symbol)
-
-        if not entry:
+        try:
+            result = fetch_day_range(symbol, start, end)
+        except requests.RequestException as error:
+            print(f"هشدار: دریافت بازه‌ی {symbol} ناموفق بود: {error}")
             continue
+
+        if not result:
+            print(f"هشدار: کندلی برای {symbol} پیدا نشد.")
+            continue
+
+        low = rial_to_toman(result[0])
+        high = rial_to_toman(result[1])
 
         rows.append(
             f"▫️ <b>{label}</b>\n"
-            f"   کمترین: {fa_number(entry['min'])} تومان\n"
-            f"   بیشترین: {fa_number(entry['max'])} تومان"
+            f"   کمترین: {fa_number(low)} تومان\n"
+            f"   بیشترین: {fa_number(high)} تومان"
         )
 
     if not rows:
-        rows.append("داده‌ای برای امروز ثبت نشده است.")
+        raise RuntimeError(
+            "برای هیچ نمادی داده‌ی روزانه دریافت نشد."
+        )
 
-    blocks.append("\n\n".join(rows))
-
-    blocks.append(
+    blocks = [
+        "📅 <b>خلاصه‌ی روز بازار</b>\n"
+        f"🗓 {day_fa}",
+        "\n\n".join(rows),
         "──────────────\n"
         f"📢 {CHANNEL_USERNAME}"
-    )
+    ]
 
     return "\n\n".join(blocks)
 
